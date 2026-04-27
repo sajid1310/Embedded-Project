@@ -1,11 +1,11 @@
 from machine import SoftI2C, Pin
 from time import sleep
-from ESII import tsl2591
+from lib import tsl2591
 
 i2c = SoftI2C(
     sda=Pin(11, pull=Pin.PULL_UP),
     scl=Pin(12, pull=Pin.PULL_UP),
-    freq=100000
+    freq=10000
 )
 
 print("I2C scan:", [hex(x) for x in i2c.scan()])

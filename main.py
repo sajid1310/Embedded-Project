@@ -5,26 +5,27 @@ from lib import tsl2591
 from lib import ssd1306
 from lib import encoder
 
-# ── Hardware ──────────────────────────────────────────────────────────────────
+
+# Hardware
 i2c = SoftI2C(
     sda=Pin(11, pull=Pin.PULL_UP),
     scl=Pin(12, pull=Pin.PULL_UP),
     freq=100000
 )
-oled    = ssd1306.SSD1306_I2C(128, 64, i2c)
-sensor  = tsl2591.TSL2591(i2c)
+oled        = ssd1306.SSD1306_I2C(128, 64, i2c)
+sensor      = tsl2591.TSL2591(i2c)
 encoder_obj = encoder.RotaryEncoder(clk_pin=17, dt_pin=9, sw_pin=7)
 
-# ── Sensor defaults ───────────────────────────────────────────────────────────
-sensor.gain             = tsl2591.GAIN_LOW
-sensor.integration_time = tsl2591.INTEGRATIONTIME_100MS
+# Sensor defaults 
+sensor.gain             = tsl2591.GAIN_HIGH
+sensor.integration_time = tsl2591.INTEGRATIONTIME_300MS
 
-# ── Photographic constants ────────────────────────────────────────────────────
-CALIBRATION_K = 12.5   # incident-light meter constant (12.5 = most cameras)
+# Photographic constants 
+CALIBRATION_K = 1.173
+EV_OFFSET     = 0.0
 
 ISO_VALUES = [50, 100, 200, 400, 800, 1600, 3200, 6400, 12800]
 
-# Standard shutter speeds (stored as fractions, displayed as strings)
 SHUTTERS = [
     (8,      "8s"),
     (4,      "4s"),
@@ -44,7 +45,6 @@ SHUTTERS = [
     (1/4000, "1/4000"),
 ]
 
-# Standard apertures (f-stops)
 APERTURES = [
     (1.0,  "f/1.0"),
     (1.4,  "f/1.4"),
@@ -59,51 +59,81 @@ APERTURES = [
     (32.0, "f/32"),
 ]
 
-DISPLAY_MODES = ["EV+EXPO", "SHUTTER", "APERTURE", "GRAPH"]
-#  EV+EXPO   → big EV number + one recommended exposure combo
-#  SHUTTER   → locked aperture, shows matching shutter speed
-#  APERTURE  → locked shutter, shows matching aperture
-#  GRAPH     → EV history bar graph
+DISPLAY_MODES = ["EV+EXPO", "A PRIORITY", "S PRIORITY", "GRAPH"]
 
-# ── App state ─────────────────────────────────────────────────────────────────
+# App state 
 iso_idx      = 1      # ISO 100
 aperture_idx = 3      # f/2.8
 shutter_idx  = 10     # 1/125
 mode_idx     = 0
-menu         = None   # None | "ISO" | "APERTURE" | "SHUTTER" | "MODE"
+menu         = None   
 
-ev_val       = 0.0
-lux_val      = 0.0
-overflow     = False
-ev_history   = [0.0] * 128
+ev_val    = 0.0
+lux_val   = 0.0
+cct_val   = None
+overflow  = False
+ev_history = [0.0] * 128
 
-# ── EV calculation ────────────────────────────────────────────────────────────
+def draw_boot():
+    oled.fill(0)
+
+    # Camera icon
+    oled.rect(34, 10, 60, 30, 1)
+    oled.ellipse(64, 25, 10, 10, 1)
+    oled.rect(48, 5, 20, 8, 1)
+    oled.fill_rect(68, 20, 3, 3, 1)
+
+    # Center helper
+    def center_text(text, y):
+        x = (128 - len(text) * 8) // 2
+        oled.text(text, x, y)
+
+    # Text
+    center_text("NanoLux", 42)
+
+    oled.show()
+    sleep_ms(1500)
+
+    oled.fill(0)
+    oled.show()
+  
+draw_boot()
+
+
+#  EV calculation 
 def lux_to_ev(lux, iso):
     if lux <= 0:
         return 0.0
     return math.log(lux * iso / (CALIBRATION_K * 100.0), 2)
-    # Note: lux * ISO / (K * 100) normalises to ISO 100 base
 
 def ev_to_lux(ev, iso):
     return (CALIBRATION_K * 100.0 * (2 ** ev)) / iso
 
-# ── Exposure combinatorics ────────────────────────────────────────────────────
+def lux_to_cct(ch0, ch1):
+    """
+    Estimate Correlated Colour Temperature in Kelvin
+    from TSL2591 raw channel counts.
+    Uses the Lux/IR ratio method.
+    Returns None if calculation is not possible.
+    """
+    if ch0 == 0 or ch1 == 0:
+        return None
+    ratio = ch1 / ch0
+    if ratio <= 0.0:
+        return None
+    cct = int(2990 * (0.2082 / ratio) ** 1.3)
+    return max(1000, min(cct, 12000))
+
+# Exposure combinatorics 
 def shutter_for_aperture(ev, aperture, iso):
-    """Given EV and aperture, return ideal shutter speed in seconds."""
-    # EV = log2(N² / t)  where N=aperture, t=shutter (at box ISO 100)
-    # Adjusted for actual ISO: EV_adj = EV - log2(iso/100)
-    ev_adj = ev - math.log(iso / 100.0, 2)
-    t = (aperture ** 2) / (2 ** ev_adj)
+    t = (aperture ** 2) / (2 ** ev)
     return t
 
 def aperture_for_shutter(ev, shutter, iso):
-    """Given EV and shutter speed, return ideal aperture (N)."""
-    ev_adj = ev - math.log(iso / 100.0, 2)
-    n = math.sqrt(shutter * (2 ** ev_adj))
+    n = math.sqrt(shutter * (2 ** ev))
     return n
 
 def nearest_shutter(t):
-    """Find nearest standard shutter speed."""
     best = 0
     best_diff = 999999
     for i, (s, _) in enumerate(SHUTTERS):
@@ -114,7 +144,6 @@ def nearest_shutter(t):
     return best
 
 def nearest_aperture(n):
-    """Find nearest standard aperture."""
     best = 0
     best_diff = 999999
     for i, (a, _) in enumerate(APERTURES):
@@ -125,133 +154,16 @@ def nearest_aperture(n):
     return best
 
 def recommended_exposure(ev, iso):
-    """
-    Return a balanced exposure suggestion:
-    tries to pick a mid-range aperture + appropriate shutter.
-    """
-    # Start from f/5.6 as a neutral aperture
-    base_aperture = APERTURES[7][0]  # f/5.6
+    base_aperture = APERTURES[5][0]  # f/5.6
     t = shutter_for_aperture(ev, base_aperture, iso)
     si = nearest_shutter(t)
-    # Use actual nearest shutter to get corrected aperture
     actual_t = SHUTTERS[si][0]
     n = aperture_for_shutter(ev, actual_t, iso)
     ai = nearest_aperture(n)
     return ai, si
 
-# ── OLED drawing ──────────────────────────────────────────────────────────────
-def draw_ev_screen(ev, iso, overflow=False):
-    oled.fill(0)
-    if overflow:
-        oled.text("!! OVERFLOW !!", 8, 4)
-        oled.text("Reduce gain or", 4, 20)
-        oled.text("integration time", 0, 32)
-        oled.hline(0, 46, 128, 1)
-        oled.text("ISO{}".format(ISO_VALUES[iso_idx]), 0, 53)
-        oled.show()
-        return
-
-    # Large EV value centred
-    ev_str  = "EV {:+.1f}".format(ev)
-    x = max(0, (128 - len(ev_str) * 8) // 2)
-    oled.text(ev_str, x, 4)
-
-    # EV scene reference
-    oled.text(ev_scene_label(ev), 0, 18)
-
-    # Suggested exposure
-    ai, si = recommended_exposure(ev, iso)
-    oled.hline(0, 30, 128, 1)
-    oled.text("ISO{}".format(iso),          0, 34)
-    oled.text(APERTURES[ai][1],            56, 34)
-    oled.text(SHUTTERS[si][1],              0, 46)
-    oled.text("(suggested)",               56, 46)
-
-    # Bottom status
-    oled.hline(0, 56, 128, 1)
-    oled.text("LX:{:.0f}".format(lux_val), 0, 57)
-    oled.show()
-
-def draw_shutter_priority(ev, iso):
-    """Locked aperture → show shutter speed."""
-    oled.fill(0)
-    aperture = APERTURES[aperture_idx][0]
-    t = shutter_for_aperture(ev, aperture, iso)
-    si = nearest_shutter(t)
-
-    oled.text("APERTURE LOCK", 0, 0)
-    oled.hline(0, 10, 128, 1)
-    oled.text(APERTURES[aperture_idx][1], 0, 14)
-    oled.text("ISO{}".format(iso),       72, 14)
-
-    shutter_str = SHUTTERS[si][1]
-    x = max(0, (128 - len(shutter_str) * 8) // 2)
-    oled.text(shutter_str, x, 30)
-    oled.text("shutter", 40, 44)
-
-    oled.hline(0, 54, 128, 1)
-    oled.text("EV{:+.1f}".format(ev), 0, 57)
-    oled.text("LX:{:.0f}".format(lux_val), 64, 57)
-    oled.show()
-
-def draw_aperture_priority(ev, iso):
-    """Locked shutter → show aperture."""
-    oled.fill(0)
-    shutter = SHUTTERS[shutter_idx][0]
-    n = aperture_for_shutter(ev, shutter, iso)
-    ai = nearest_aperture(n)
-
-    oled.text("SHUTTER LOCK", 0, 0)
-    oled.hline(0, 10, 128, 1)
-    oled.text(SHUTTERS[shutter_idx][1], 0, 14)
-    oled.text("ISO{}".format(iso),      72, 14)
-
-    ap_str = APERTURES[ai][1]
-    x = max(0, (128 - len(ap_str) * 8) // 2)
-    oled.text(ap_str, x, 30)
-    oled.text("aperture", 36, 44)
-
-    oled.hline(0, 54, 128, 1)
-    oled.text("EV{:+.1f}".format(ev), 0, 57)
-    oled.text("LX:{:.0f}".format(lux_val), 64, 57)
-    oled.show()
-
-def draw_graph_screen(ev):
-    oled.fill(0)
-    oled.text("EV Graph", 0, 0)
-
-    min_ev = min(ev_history)
-    max_ev = max(ev_history)
-    span   = max(max_ev - min_ev, 1.0)
-    graph_h = 44
-
-    for x, v in enumerate(ev_history):
-        bar_h = int(((v - min_ev) / span) * graph_h)
-        if bar_h > 0:
-            oled.vline(x, 54 - bar_h, bar_h, 1)
-
-    oled.hline(0, 55, 128, 1)
-    oled.text("EV{:+.1f}".format(ev), 0, 57)
-    oled.text("ISO{}".format(ISO_VALUES[iso_idx]), 72, 57)
-    oled.show()
-
-def draw_menu(title, items, selected):
-    oled.fill(0)
-    oled.text(title, 0, 0)
-    oled.hline(0, 10, 128, 1)
-    start = max(0, selected - 1)
-    for i, item in enumerate(items[start: start + 4]):
-        y = 14 + i * 12
-        actual_idx = start + i
-        if actual_idx == selected:
-            oled.fill_rect(0, y - 1, 128, 11, 1)
-            oled.text("> " + str(item), 0, y, 0)
-        else:
-            oled.text("  " + str(item), 0, y)
-    oled.show()
-
+# EV scene label 
 def ev_scene_label(ev):
-    """Human-readable scene description for a given EV."""
     if ev < -2:  return "Moonless night"
     if ev < 0:   return "Night scene"
     if ev < 3:   return "Candlelight"
@@ -264,7 +176,132 @@ def ev_scene_label(ev):
     if ev < 17:  return "Bright sun"
     return       "Extreme light"
 
-# ── Main loop ─────────────────────────────────────────────────────────────────
+  # OLED drawing 
+def draw_ev_screen(ev, iso, overflow=False):
+    oled.fill(0)
+    if overflow:
+        oled.text("!! OVERFLOW !!", 8, 4)
+        oled.text("Reduce gain or", 4, 20)
+        oled.text("integ. time", 10, 32)
+        oled.show()
+        return
+
+    # EV — yellow band
+    ev_str = "EV {:+.1f}".format(ev)
+    x = max(0, (128 - len(ev_str) * 8) // 2)
+    oled.text(ev_str, x, 0)
+
+    # Scene label
+    oled.text(ev_scene_label(ev), 0, 12)
+
+    oled.hline(0, 22, 128, 1)
+
+    # Suggested exposure 
+    ai, si = recommended_exposure(ev, iso)
+    oled.text("ISO {}".format(iso),     0, 25)
+    oled.text(APERTURES[ai][1],         0, 36)
+    oled.text(SHUTTERS[si][1],          0, 47)
+
+    oled.hline(0, 56, 128, 1)
+    oled.text("LX:{:.0f}".format(lux_val), 0, 57)
+    if cct_val:
+        oled.text("{}K".format(cct_val),  72, 57)
+    oled.show()
+
+
+def draw_a_priority(ev, iso):
+    """A PRIORITY — locked aperture, shows matching shutter speed."""
+    oled.fill(0)
+    aperture = APERTURES[aperture_idx][0]
+    t = shutter_for_aperture(ev, aperture, iso)
+    si = nearest_shutter(t)
+
+    # Header — yellow band
+    oled.text("A PRIORITY", 20, 2)
+    oled.hline(0, 13, 128, 1)
+
+    # Settings row
+    oled.text(APERTURES[aperture_idx][1], 0, 16)
+    oled.text("ISO{}".format(iso),       72, 16)
+
+    # Big shutter speed centred
+    shutter_str = SHUTTERS[si][1]
+    x = max(0, (128 - len(shutter_str) * 8) // 2)
+    oled.text(shutter_str, x, 30)
+    oled.text("shutter speed",           8, 43)
+
+    # Status bar
+    oled.hline(0, 54, 128, 1)
+    oled.text("EV{:+.1f}".format(ev),   0, 56)
+    if cct_val:
+        oled.text("{}K".format(cct_val), 80, 56)
+    oled.show()
+
+def draw_s_priority(ev, iso):
+    """S PRIORITY — locked shutter, shows matching aperture."""
+    oled.fill(0)
+    shutter = SHUTTERS[shutter_idx][0]
+    n = aperture_for_shutter(ev, shutter, iso)
+    ai = nearest_aperture(n)
+
+    # Header — yellow band
+    oled.text("S PRIORITY", 20, 2)
+    oled.hline(0, 13, 128, 1)
+
+    # Settings row
+    oled.text(SHUTTERS[shutter_idx][1], 0, 16)
+    oled.text("ISO{}".format(iso),     72, 16)
+
+    # Big aperture centred
+    ap_str = APERTURES[ai][1]
+    x = max(0, (128 - len(ap_str) * 8) // 2)
+    oled.text(ap_str, x, 30)
+    oled.text("aperture",              36, 43)
+
+    # Status bar
+    oled.hline(0, 54, 128, 1)
+    oled.text("EV{:+.1f}".format(ev),  0, 56)
+    if cct_val:
+        oled.text("{}K".format(cct_val), 80, 56)
+    oled.show()
+
+def draw_graph_screen(ev):
+    oled.fill(0)
+    oled.text("EV Graph", 0, 2)
+
+    min_ev = min(ev_history)
+    max_ev = max(ev_history)
+    span   = max(max_ev - min_ev, 1.0)
+    graph_h = 44
+
+    for x, v in enumerate(ev_history):
+        bar_h = int(((v - min_ev) / span) * graph_h)
+        if bar_h > 0:
+            oled.vline(x, 54 - bar_h, bar_h, 1)
+
+    oled.hline(0, 55, 128, 1)
+    oled.text("EV{:+.1f}".format(ev),          0, 57)
+    oled.text("ISO{}".format(ISO_VALUES[iso_idx]), 72, 57)
+    oled.show()
+
+def draw_menu(title, items, selected):
+    oled.fill(0)
+    oled.text(title, 0, 0)
+    oled.hline(0, 10, 128, 1)
+    start = max(0, selected - 1)
+    for i, item in enumerate(items[start: start + 3]):   # 3 items now, not 4
+        y = 14 + i * 12
+        actual_idx = start + i
+        if actual_idx == selected:
+            oled.fill_rect(0, y - 1, 128, 11, 1)
+            oled.text("> " + str(item), 0, y, 0)
+        else:
+            oled.text("  " + str(item), 0, y)
+    oled.hline(0, 53, 128, 1)
+    oled.text("hold=back", 34, 56)   # reminder at bottom
+    oled.show
+
+# Main loop 
 READ_INTERVAL_MS = 400
 last_read_ms     = 0
 
@@ -272,7 +309,7 @@ while True:
     now = ticks_ms()
     iso = ISO_VALUES[iso_idx]
 
-    # ── Button press: cycle menus ─────────────────────────────────────────────
+    # Short press: advance forward through menus
     if encoder_obj.get_pressed():
         if menu is None:
             menu = "ISO"
@@ -285,7 +322,18 @@ while True:
         elif menu == "MODE":
             menu = None
 
-    # ── Encoder turn ─────────────────────────────────────────────────────────
+    # Long press: go back one menu step
+    if encoder_obj.get_long_pressed():
+        if menu == "ISO":
+            menu = None
+        elif menu == "APERTURE":
+            menu = "ISO"
+        elif menu == "SHUTTER":
+            menu = "APERTURE"
+        elif menu == "MODE":
+            menu = "SHUTTER"
+
+    # Encoder rotation
     delta = encoder_obj.get_delta()
     if delta != 0:
         if menu == "ISO":
@@ -297,12 +345,14 @@ while True:
         elif menu == "MODE":
             mode_idx = (mode_idx + delta) % len(DISPLAY_MODES)
 
-    # ── Sensor read ───────────────────────────────────────────────────────────
+    # Sensor read every 400ms
     if ticks_diff(now, last_read_ms) >= READ_INTERVAL_MS:
         last_read_ms = now
         try:
+            ch0, ch1 = sensor.raw_luminosity
             lux_val  = sensor.lux
             ev_val   = lux_to_ev(lux_val, iso)
+            cct_val  = lux_to_cct(ch0, ch1)
             overflow = False
             ev_history.pop(0)
             ev_history.append(ev_val)
@@ -311,7 +361,7 @@ while True:
         except Exception as e:
             print("Sensor error:", e)
 
-    # ── Draw ──────────────────────────────────────────────────────────────────
+    # Draw
     if menu == "ISO":
         draw_menu("Set ISO", ["ISO {}".format(v) for v in ISO_VALUES], iso_idx)
     elif menu == "APERTURE":
@@ -324,11 +374,12 @@ while True:
         mode = DISPLAY_MODES[mode_idx]
         if mode == "EV+EXPO":
             draw_ev_screen(ev_val, iso, overflow)
-        elif mode == "SHUTTER":
-            draw_shutter_priority(ev_val, iso)
-        elif mode == "APERTURE":
-            draw_aperture_priority(ev_val, iso)
+        elif mode == "A PRIORITY":
+            draw_a_priority(ev_val, iso)
+        elif mode == "S PRIORITY":
+            draw_s_priority(ev_val, iso)
         elif mode == "GRAPH":
             draw_graph_screen(ev_val)
 
     sleep_ms(50)
+
