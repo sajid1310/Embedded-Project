@@ -6,57 +6,116 @@ from lib import ssd1306
 from lib import encoder
 
 
-# Hardware
+# Hardware 
 i2c = SoftI2C(
     sda=Pin(11, pull=Pin.PULL_UP),
     scl=Pin(12, pull=Pin.PULL_UP),
     freq=100000
 )
-oled        = ssd1306.SSD1306_I2C(128, 64, i2c)
+oled        = ssd1306.SSD1306_I2C(128, 64, i2c) 
 sensor      = tsl2591.TSL2591(i2c)
 encoder_obj = encoder.RotaryEncoder(clk_pin=17, dt_pin=9, sw_pin=7)
 
 # Sensor defaults 
-sensor.gain             = tsl2591.GAIN_HIGH
+sensor.gain             = tsl2591.GAIN_MED
 sensor.integration_time = tsl2591.INTEGRATIONTIME_300MS
 
 # Photographic constants 
-CALIBRATION_K = 1.173
-EV_OFFSET     = 0.0
+CALIBRATION_K = 1.176 # Based on empirical calibration to match Sony a 7C II at ISO 100
+EV_OFFSET     = 0.0 # Adjust this if you want the EV readout to match a reference camera more closely.
 
 ISO_VALUES = [50, 100, 200, 400, 800, 1600, 3200, 6400, 12800]
 
-SHUTTERS = [
+SHUTTERS = [ # Standard shutter speeds from 30s to 1/8000s
+    (30,     "30s"),
+    (25,     "25s"),
+    (20,     "20s"),
+    (15,     "15s"),
+    (13,     "13s"),
+    (10,     "10s"),
     (8,      "8s"),
+    (6,      "6s"),
+    (5,      "5s"),
     (4,      "4s"),
+    (3,      "3s"),
+    (2.5,    "2.5s"),
     (2,      "2s"),
+    (1.6,    "1.6s"),
+    (1.3,    "1.3s"),
     (1,      "1s"),
+    (1/1.3,  "1/1.3"),
+    (1/1.6,  "1/1.6"),
     (1/2,    "1/2"),
+    (1/2.5,  "1/2.5"),
+    (1/3,    "1/3"),
     (1/4,    "1/4"),
+    (1/5,    "1/5"),
+    (1/6,    "1/6"),
     (1/8,    "1/8"),
+    (1/10,   "1/10"),
+    (1/13,   "1/13"),
     (1/15,   "1/15"),
+    (1/20,   "1/20"),
+    (1/25,   "1/25"),
     (1/30,   "1/30"),
+    (1/40,   "1/40"),
+    (1/50,   "1/50"),
     (1/60,   "1/60"),
+    (1/80,   "1/80"),
+    (1/100,  "1/100"),
     (1/125,  "1/125"),
+    (1/160,  "1/160"),
+    (1/200,  "1/200"),
     (1/250,  "1/250"),
+    (1/320,  "1/320"),
+    (1/400,  "1/400"),
     (1/500,  "1/500"),
+    (1/640,  "1/640"),
+    (1/800,  "1/800"),
     (1/1000, "1/1000"),
+    (1/1250, "1/1250"),
+    (1/1600, "1/1600"),
     (1/2000, "1/2000"),
+    (1/2500, "1/2500"),
+    (1/3200, "1/3200"),
     (1/4000, "1/4000"),
+    (1/5000, "1/5000"),
+    (1/6400, "1/6400"),
+    (1/8000, "1/8000"),
 ]
 
-APERTURES = [
-    (1.0,  "f/1.0"),
-    (1.4,  "f/1.4"),
-    (2.0,  "f/2.0"),
-    (2.8,  "f/2.8"),
-    (4.0,  "f/4"),
-    (5.6,  "f/5.6"),
-    (8.0,  "f/8"),
-    (11.0, "f/11"),
-    (16.0, "f/16"),
-    (22.0, "f/22"),
-    (32.0, "f/32"),
+APERTURES = [ # Standard f-stops from f/1.0 to f/32
+    (1.0,   "f/1.0"),
+    (1.1,   "f/1.1"),
+    (1.2,   "f/1.2"),
+    (1.4,   "f/1.4"),
+    (1.6,   "f/1.6"),
+    (1.8,   "f/1.8"),
+    (2.0,   "f/2.0"),
+    (2.2,   "f/2.2"),
+    (2.5,   "f/2.5"),
+    (2.8,   "f/2.8"),
+    (3.2,   "f/3.2"),
+    (3.5,   "f/3.5"),
+    (4.0,   "f/4"),
+    (4.5,   "f/4.5"),
+    (5.0,   "f/5.0"),
+    (5.6,   "f/5.6"),
+    (6.3,   "f/6.3"),
+    (7.1,   "f/7.1"),
+    (8.0,   "f/8"),
+    (9.0,   "f/9"),
+    (10.0,  "f/10"),
+    (11.0,  "f/11"),
+    (13.0,  "f/13"),
+    (14.0,  "f/14"),
+    (16.0,  "f/16"),
+    (18.0,  "f/18"),
+    (20.0,  "f/20"),
+    (22.0,  "f/22"),
+    (25.0,  "f/25"),
+    (29.0,  "f/29"),
+    (32.0,  "f/32"),
 ]
 
 DISPLAY_MODES = ["EV+EXPO", "A PRIORITY", "S PRIORITY", "GRAPH"]
@@ -64,7 +123,7 @@ DISPLAY_MODES = ["EV+EXPO", "A PRIORITY", "S PRIORITY", "GRAPH"]
 # App state 
 iso_idx      = 1      # ISO 100
 aperture_idx = 3      # f/2.8
-shutter_idx  = 10     # 1/125
+shutter_idx  = 37     # 1/125
 mode_idx     = 0
 menu         = None   
 
@@ -74,7 +133,7 @@ cct_val   = None
 overflow  = False
 ev_history = [0.0] * 128
 
-def draw_boot():
+def draw_boot(): # Simple boot screen with camera icon and title
     oled.fill(0)
 
     # Camera icon
@@ -101,12 +160,14 @@ draw_boot()
 
 
 #  EV calculation 
-def lux_to_ev(lux, iso):
+def lux_to_ev(lux, iso): 
+    """Convert lux to Exposure Value (EV) at a given ISO, using the formula EV = log2(lux * iso / K), where K is a calibration constant."""
     if lux <= 0:
         return 0.0
     return math.log(lux * iso / (CALIBRATION_K * 100.0), 2)
 
 def ev_to_lux(ev, iso):
+    """ Convert Exposure Value (EV) back to lux for a given ISO, using the inverse of the EV formula: lux = K * 100 * 2^EV / ISO."""
     return (CALIBRATION_K * 100.0 * (2 ** ev)) / iso
 
 def lux_to_cct(ch0, ch1):
@@ -119,21 +180,25 @@ def lux_to_cct(ch0, ch1):
     if ch0 == 0 or ch1 == 0:
         return None
     ratio = ch1 / ch0
+
     if ratio <= 0.0:
         return None
     cct = int(2990 * (0.2082 / ratio) ** 1.3)
     return max(1000, min(cct, 12000))
 
-# Exposure combinatorics 
+#  Exposure combinatorics
 def shutter_for_aperture(ev, aperture, iso):
+    """Calculate the shutter speed (exposure time) needed to achieve a given EV with a specific aperture and ISO."""
     t = (aperture ** 2) / (2 ** ev)
     return t
 
 def aperture_for_shutter(ev, shutter, iso):
+    """Calculate the aperture needed to achieve a given EV with a specific shutter speed and ISO."""
     n = math.sqrt(shutter * (2 ** ev))
     return n
 
 def nearest_shutter(t):
+    """Find the index of the nearest standard shutter speed to a given exposure time."""
     best = 0
     best_diff = 999999
     for i, (s, _) in enumerate(SHUTTERS):
@@ -144,6 +209,7 @@ def nearest_shutter(t):
     return best
 
 def nearest_aperture(n):
+    """Find the index of the nearest standard aperture to a given f-number."""
     best = 0
     best_diff = 999999
     for i, (a, _) in enumerate(APERTURES):
@@ -154,7 +220,8 @@ def nearest_aperture(n):
     return best
 
 def recommended_exposure(ev, iso):
-    base_aperture = APERTURES[5][0]  # f/5.6
+    """Given an EV and ISO, recommend a standard aperture and shutter speed combination. Uses a base aperture of f/5.6 for calculations."""
+    base_aperture = APERTURES[15][0]  # f/5.6
     t = shutter_for_aperture(ev, base_aperture, iso)
     si = nearest_shutter(t)
     actual_t = SHUTTERS[si][0]
@@ -162,8 +229,9 @@ def recommended_exposure(ev, iso):
     ai = nearest_aperture(n)
     return ai, si
 
-# EV scene label 
+# EV scene label
 def ev_scene_label(ev):
+    """Return a human-readable label for a given EV value, based on typical photographic scenes."""
     if ev < -2:  return "Moonless night"
     if ev < 0:   return "Night scene"
     if ev < 3:   return "Candlelight"
@@ -177,7 +245,7 @@ def ev_scene_label(ev):
     return       "Extreme light"
 
   # OLED drawing 
-def draw_ev_screen(ev, iso, overflow=False):
+def draw_ev_screen(ev, iso, overflow=False): # Main EV+EXPO screen with EV, scene label, and recommended settings. Shows overflow warning if sensor reading failed.
     oled.fill(0)
     if overflow:
         oled.text("!! OVERFLOW !!", 8, 4)
@@ -266,6 +334,7 @@ def draw_s_priority(ev, iso):
     oled.show()
 
 def draw_graph_screen(ev):
+    """GRAPH — shows EV history graph and current EV/ISO."""
     oled.fill(0)
     oled.text("EV Graph", 0, 2)
 
@@ -289,7 +358,7 @@ def draw_menu(title, items, selected):
     oled.text(title, 0, 0)
     oled.hline(0, 10, 128, 1)
     start = max(0, selected - 1)
-    for i, item in enumerate(items[start: start + 3]):   # 3 items now, not 4
+    for i, item in enumerate(items[start: start + 3]):   
         y = 14 + i * 12
         actual_idx = start + i
         if actual_idx == selected:
@@ -298,8 +367,8 @@ def draw_menu(title, items, selected):
         else:
             oled.text("  " + str(item), 0, y)
     oled.hline(0, 53, 128, 1)
-    oled.text("hold=back", 34, 56)   # reminder at bottom
-    oled.show
+    oled.text("hold=back", 34, 56)   
+    oled.show()
 
 # Main loop 
 READ_INTERVAL_MS = 400
